@@ -10,6 +10,10 @@
     "developmentClient": {
       "silentLaunch": true
     },
+    "plugins": [
+      "expo-av",
+      "expo-audio"
+    ],
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
