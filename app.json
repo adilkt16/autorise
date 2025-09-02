@@ -12,7 +12,17 @@
     },
     "plugins": [
       "expo-av",
-      "expo-audio"
+      "expo-audio",
+      "expo-task-manager",
+      "expo-background-fetch",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#ffffff",
+          "sounds": ["./assets/alarm_default.mp3"]
+        }
+      ]
     ],
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -20,7 +30,10 @@
       "backgroundColor": "#667eea"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": ["audio", "background-fetch", "background-processing"]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -28,7 +41,20 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.adil_kunnanthodi.autoriseapp"
+      "package": "com.adil_kunnanthodi.autoriseapp",
+      "permissions": [
+        "WAKE_LOCK",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "SYSTEM_ALERT_WINDOW",
+        "USE_FULL_SCREEN_INTENT",
+        "SCHEDULE_EXACT_ALARM",
+        "SET_ALARM",
+        "DISABLE_KEYGUARD",
+        "TURN_SCREEN_ON",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
