@@ -9,9 +9,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/**
- * AlarmPackage - Registers the AlarmModule with React Native
- */
 public class AlarmPackage implements ReactPackage {
     
     @Override

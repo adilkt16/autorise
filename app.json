@@ -22,7 +22,8 @@
           "color": "#ffffff",
           "sounds": ["./assets/alarm_default.mp3"]
         }
-      ]
+      ],
+      "./plugins/android-alarm-plugin.js"
     ],
     "splash": {
       "image": "./assets/splash-icon.png",

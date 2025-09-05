@@ -1,578 +1,363 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  TouchableOpacity, 
-  StyleSheet, 
-  SafeAreaView, 
-  ScrollView, 
-  Modal, 
-  TextInput, 
+import React, { useState, useEffect } from 'react';
+import {
+  StyleSheet,
+  Text,
+  View,
+  TouchableOpacity,
   Alert,
-  AppState,
+  ScrollView,
+  SafeAreaView,
   Platform,
-  Vibration,
-  Dimensions
+  TextInput,
+  Modal,
+  Switch,
 } from 'react-native';
-import { Audio } from 'expo-av';
-import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
-import NativeAlarmManager from './src/native/NativeAlarmManager';
+import ProductionAlarmManager, { AlarmData } from './src/services/ProductionAlarmManager';
 
 interface Alarm {
   id: string;
   hour: number;
   minute: number;
-  ampm: 'AM' | 'PM';
-  isActive: boolean;
+  label: string;
+  enabled: boolean;
+  triggerTime: number;
 }
 
 export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [alarms, setAlarms] = useState<Alarm[]>([]);
-  const [showCreateAlarm, setShowCreateAlarm] = useState(false);
-  const [newAlarmHour, setNewAlarmHour] = useState('12');
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newAlarmHour, setNewAlarmHour] = useState('7');
   const [newAlarmMinute, setNewAlarmMinute] = useState('00');
-  const [newAlarmAmPm, setNewAlarmAmPm] = useState<'AM' | 'PM'>('AM');
-  const [isAlarmRinging, setIsAlarmRinging] = useState(false);
-  const [currentRingingAlarm, setCurrentRingingAlarm] = useState<Alarm | null>(null);
-  const [alarmSound, setAlarmSound] = useState<Audio.Sound | null>(null);
-  const [appState, setAppState] = useState(AppState.currentState);
-  const [nativeAlarmReady, setNativeAlarmReady] = useState(false);
-  const [permissionStatus, setPermissionStatus] = useState<string>('');
-  const alarmTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [newAlarmLabel, setNewAlarmLabel] = useState('Wake up');
+  const [isReady, setIsReady] = useState(false);
+  const [permissionStatus, setPermissionStatus] = useState('Checking...');
 
-  // Setup native alarm system on app start
-  useEffect(() => {
-    setupAudio();
-    initializeNativeAlarmSystem();
-
-    // Listen for app state changes
-    const subscription = AppState.addEventListener('change', handleAppStateChange);
-
-    return () => {
-      subscription?.remove();
-      if (alarmTimeoutRef.current) {
-        clearTimeout(alarmTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // Timer to update current time display and check for alarms
+  // Update current time every second
   useEffect(() => {
     const timer = setInterval(() => {
-      const now = new Date();
-      setCurrentTime(now);
-      checkAlarms(now); // Check if any alarms should trigger
+      setCurrentTime(new Date());
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [alarms]); // Re-run when alarms change
+  }, []);
 
-  // Initialize the native Android alarm system
-  const initializeNativeAlarmSystem = async () => {
+  // Initialize app and check permissions
+  useEffect(() => {
+    initializeApp();
+  }, []);
+
+  const initializeApp = async () => {
     try {
-      console.log('🚀 Initializing native Android alarm system...');
-      
-      const result = await NativeAlarmManager.initializeAlarmSystem();
-      
-      if (result.success) {
-        setNativeAlarmReady(true);
-        setPermissionStatus('✅ Alarm system ready');
-        console.log('✅ Native alarm system initialized successfully');
-      } else if (result.needsPermission) {
-        setNativeAlarmReady(false);
-        setPermissionStatus(`⚠️ Need permission: ${result.message}`);
-        console.warn('⚠️ Alarm system needs permission:', result.message);
-        
-        // Show permission request dialog
-        Alert.alert(
-          'Alarm Permission Required',
-          `This app needs permission to schedule exact alarms on Android ${result.androidVersion}+. ` +
-          'Without this permission, alarms may not ring reliably.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Grant Permission', 
-              onPress: () => requestAlarmPermission() 
-            }
-          ]
-        );
-      }
-    } catch (error) {
-      console.error('❌ Failed to initialize native alarm system:', error);
-      setPermissionStatus('❌ Alarm system failed to initialize');
-      setNativeAlarmReady(false);
+      // Check if native module is ready
+      const ready = await ProductionAlarmManager.isReady();
+      setIsReady(ready);
+
+      // Check permissions
+      const permissionCheck = await ProductionAlarmManager.canScheduleExactAlarms();
+      setPermissionStatus(permissionCheck.message);
+
+      // Load existing alarms
+      await loadAlarms();
+
+      console.log('📱 AutoRise initialized successfully');
+    } catch (error: any) {
+      console.error('❌ App initialization failed:', error);
+      setPermissionStatus(`Error: ${error.message}`);
+      setIsReady(false);
     }
   };
 
-  // Request exact alarm permission for Android 12+
-  const requestAlarmPermission = async () => {
+  const loadAlarms = async () => {
     try {
-      await NativeAlarmManager.requestExactAlarmPermission();
-      
-      // Re-check permission status after user returns from settings
-      setTimeout(async () => {
-        const result = await NativeAlarmManager.canScheduleExactAlarms();
-        if (result.canSchedule) {
-          setNativeAlarmReady(true);
-          setPermissionStatus('✅ Alarm system ready');
-          Alert.alert('Success', 'Alarm permission granted! You can now create reliable alarms.');
-        } else {
-          setPermissionStatus('⚠️ Permission still needed');
-        }
-      }, 1000);
+      const loadedAlarms = await ProductionAlarmManager.getAllAlarms();
+      const formattedAlarms = loadedAlarms.map(alarm => ({
+        id: alarm.id,
+        hour: new Date(alarm.triggerTime).getHours(),
+        minute: new Date(alarm.triggerTime).getMinutes(),
+        label: alarm.label || 'Alarm',
+        enabled: alarm.enabled ?? true,
+        triggerTime: alarm.triggerTime,
+      }));
+      setAlarms(formattedAlarms);
+      console.log('✅ Loaded alarms:', formattedAlarms);
     } catch (error) {
-      console.error('❌ Failed to request alarm permission:', error);
-      Alert.alert('Error', 'Failed to request alarm permission');
+      console.log('ℹ️ No alarms to load or native module not available');
     }
   };
 
-  // Handle changes in app state (foreground/background)
-  const handleAppStateChange = (nextAppState: any) => {
-    console.log('App state changed from', appState, 'to', nextAppState);
-    setAppState(nextAppState);
-  };
-
-  const setupAudio = async () => {
-    try {
-      await Audio.setAudioModeAsync({
-        staysActiveInBackground: true,
-        shouldDuckAndroid: false,
-        playThroughEarpieceAndroid: false,
-      });
-    } catch (error) {
-      console.error('Error setting up audio:', error);
-    }
-  };
-
-  // Check if any alarms should trigger based on current time
-  const checkAlarms = (currentTime: Date) => {
-    const currentHour = currentTime.getHours();
-    const currentMinute = currentTime.getMinutes();
-    const currentSecond = currentTime.getSeconds();
-
-    // Only check at the start of each minute (when seconds = 0)
-    if (currentSecond !== 0) return;
-
-    alarms.forEach(alarm => {
-      if (alarm.isActive && alarm.hour === currentHour && alarm.minute === currentMinute) {
-        console.log(`🚨 Alarm triggered: ${alarm.id} at ${currentHour}:${currentMinute}`);
-        triggerAlarm(alarm);
-      }
-    });
-  };
-
-  // Trigger an alarm (play audio, show UI, vibrate)
-  const triggerAlarm = async (alarm: Alarm) => {
-    try {
-      console.log('🔔 Triggering alarm:', alarm);
-      
-      // Set alarm ringing state
-      setIsAlarmRinging(true);
-      setCurrentRingingAlarm(alarm);
-      
-      // Activate keep awake to prevent screen sleep
-      activateKeepAwake();
-      
-      // Start vibration pattern
-      const vibrationPattern = [0, 1000, 500, 1000, 500, 1000, 500];
-      Vibration.vibrate(vibrationPattern, true); // Repeat until stopped
-      
-      // Play alarm audio
-      await playAlarmSound();
-      
-      console.log('🎵 Alarm is now ringing with audio and vibration');
-    } catch (error) {
-      console.error('❌ Failed to trigger alarm:', error);
-    }
-  };
-
-  // Play the alarm sound
-  const playAlarmSound = async () => {
-    try {
-      console.log('🎵 Starting alarm audio...');
-      
-      // Stop any existing sound first
-      if (alarmSound) {
-        await alarmSound.stopAsync();
-        await alarmSound.unloadAsync();
-        setAlarmSound(null);
-      }
-
-      // Create and play new alarm sound
-      const { sound } = await Audio.Sound.createAsync(
-        require('./assets/alarm_default.mp3'),
-        { 
-          shouldPlay: true, 
-          isLooping: true, // Loop continuously until dismissed
-          volume: 1.0,
-        }
-      );
-
-      setAlarmSound(sound);
-      console.log('🔊 Alarm audio playing (looping)');
-      
-    } catch (error) {
-      console.error('❌ Failed to play alarm sound:', error);
-    }
-  };
-
-  // Create a new alarm using native Android AlarmManager
   const createAlarm = async () => {
-    if (!nativeAlarmReady) {
-      Alert.alert(
-        'Alarm System Not Ready',
-        'Please grant alarm permissions first. Check settings.'
-      );
-      return;
-    }
-
     try {
       const hour = parseInt(newAlarmHour);
       const minute = parseInt(newAlarmMinute);
       
-      // Convert to 24-hour format for native alarm
-      let hour24 = hour;
-      if (newAlarmAmPm === 'PM' && hour !== 12) {
-        hour24 += 12;
-      } else if (newAlarmAmPm === 'AM' && hour === 12) {
-        hour24 = 0;
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        Alert.alert('Invalid Time', 'Please enter a valid time (hour: 0-23, minute: 0-59)');
+        return;
       }
 
-      const alarmId = `alarm_${Date.now()}`;
-      const alarmTime = `${newAlarmHour}:${newAlarmMinute.padStart(2, '0')} ${newAlarmAmPm}`;
-
-      // Create the alarm object
-      const newAlarm: Alarm = {
-        id: alarmId,
-        hour: hour24,
+      const response = await ProductionAlarmManager.scheduleAlarmForTime(
+        `alarm-${Date.now()}`,
+        hour,
         minute,
-        ampm: newAlarmAmPm,
-        isActive: true,
-      };
-
-      console.log('📱 Creating native alarm:', alarmTime, `(${hour24}:${minute})`);
-      
-      // Schedule with native Android AlarmManager
-      const result = await NativeAlarmManager.scheduleAlarm(
-        alarmId,
-        hour24,
-        minute,
-        alarmTime
+        newAlarmLabel
       );
-
-      // Add to local state
-      setAlarms([...alarms, newAlarm]);
       
-      // Reset form
-      setNewAlarmHour('12');
-      setNewAlarmMinute('00');
-      setNewAlarmAmPm('AM');
-      setShowCreateAlarm(false);
-
-      Alert.alert(
-        'Native Alarm Scheduled',
-        `✅ Alarm set for ${alarmTime}\n\nUsing Android AlarmManager for reliable wake-up. ` +
-        'This alarm will ring even when the device is locked or idle.',
-        [{ text: 'OK' }]
-      );
-
-      console.log('✅ Native alarm created successfully:', result);
-    } catch (error) {
-      console.error('❌ Failed to create native alarm:', error);
-      Alert.alert('Error', `Failed to create alarm: ${error}`);
-    }
-  };
-
-  // Toggle alarm on/off
-  const toggleAlarm = async (alarmId: string) => {
-    try {
-      const alarm = alarms.find(a => a.id === alarmId);
-      if (!alarm) return;
-
-      if (alarm.isActive) {
-        // Cancel the native alarm
-        await NativeAlarmManager.cancelAlarm(alarmId);
-        console.log('🚫 Native alarm canceled:', alarmId);
-      } else {
-        // Re-schedule the native alarm
-        const hour24 = alarm.hour;
-        const alarmTime = `${alarm.hour === 0 ? 12 : alarm.hour > 12 ? alarm.hour - 12 : alarm.hour}:${alarm.minute.toString().padStart(2, '0')} ${alarm.ampm}`;
+      if (response.success) {
+        await loadAlarms(); // Reload to get latest data
+        setShowCreateModal(false);
+        resetForm();
         
-        await NativeAlarmManager.scheduleAlarm(
-          alarmId,
-          hour24,
-          alarm.minute,
-          alarmTime
+        Alert.alert(
+          '✅ Alarm Created',
+          `Alarm "${newAlarmLabel}" set for ${formatTime(hour, minute)}\n\n` +
+          `The alarm will play reliably even when your device is locked or in Doze mode.`
         );
-        console.log('✅ Native alarm re-scheduled:', alarmId);
       }
-
-      // Update local state
-      setAlarms(alarms.map(a => 
-        a.id === alarmId ? { ...a, isActive: !a.isActive } : a
-      ));
-    } catch (error) {
-      console.error('❌ Failed to toggle alarm:', error);
-      Alert.alert('Error', `Failed to toggle alarm: ${error}`);
+    } catch (error: any) {
+      Alert.alert(
+        '❌ Error Creating Alarm',
+        error.message || 'Failed to create alarm. Make sure you have granted exact alarm permissions.'
+      );
     }
   };
 
-  // Delete an alarm
   const deleteAlarm = async (alarmId: string) => {
     try {
-      // Cancel the native alarm
-      await NativeAlarmManager.cancelAlarm(alarmId);
-      
-      // Remove from local state
-      setAlarms(alarms.filter(a => a.id !== alarmId));
-      
-      console.log('🗑️ Native alarm deleted:', alarmId);
-    } catch (error) {
-      console.error('❌ Failed to delete alarm:', error);
-      Alert.alert('Error', `Failed to delete alarm: ${error}`);
+      await ProductionAlarmManager.cancelAlarm(alarmId);
+      await loadAlarms();
+      Alert.alert('✅ Alarm Deleted', 'Alarm has been cancelled and removed');
+    } catch (error: any) {
+      Alert.alert('❌ Error', error.message || 'Failed to delete alarm');
     }
   };
 
-  // Stop currently ringing alarm
-  const dismissAlarm = async () => {
-    try {
-      console.log('📱 Dismissing alarm...');
-      
-      // Stop the native alarm service
-      await NativeAlarmManager.stopAlarm();
-      
-      // Stop local audio if playing
-      if (alarmSound) {
-        await alarmSound.stopAsync();
-        await alarmSound.unloadAsync();
-        setAlarmSound(null);
-      }
-
-      // Stop vibration
-      Vibration.cancel();
-      
-      // Deactivate keep awake
-      deactivateKeepAwake();
-      
-      // Reset alarm state
-      setIsAlarmRinging(false);
-      setCurrentRingingAlarm(null);
-      
-      if (alarmTimeoutRef.current) {
-        clearTimeout(alarmTimeoutRef.current);
-        alarmTimeoutRef.current = null;
-      }
-
-      console.log('✅ Alarm dismissed successfully');
-    } catch (error) {
-      console.error('❌ Failed to dismiss alarm:', error);
-    }
-  };
-
-  // Format time for display
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('en-US', {
-      hour12: true,
-      hour: 'numeric',
-      minute: '2-digit',
-      second: '2-digit'
-    });
-  };
-
-  // Format alarm time for display
-  const formatAlarmTime = (alarm: Alarm) => {
-    const displayHour = alarm.hour === 0 ? 12 : alarm.hour > 12 ? alarm.hour - 12 : alarm.hour;
-    return `${displayHour}:${alarm.minute.toString().padStart(2, '0')} ${alarm.ampm}`;
-  };
-
-  // Request battery optimization settings
-  const requestBatteryOptimization = async () => {
-    try {
-      await NativeAlarmManager.requestBatteryOptimizationDisable();
-    } catch (error) {
-      console.error('❌ Failed to request battery optimization:', error);
-    }
-  };
-
-  // Test alarm functionality (development only)
   const testAlarm = async () => {
-    const testAlarmData: Alarm = {
-      id: 'test_alarm',
-      hour: new Date().getHours(),
-      minute: new Date().getMinutes(),
-      ampm: new Date().getHours() >= 12 ? 'PM' : 'AM',
-      isActive: true
-    };
-    
-    console.log('🧪 Testing alarm functionality...');
-    await triggerAlarm(testAlarmData);
+    try {
+      const response = await ProductionAlarmManager.testAlarm();
+      if (response.success) {
+        Alert.alert(
+          '🧪 Test Alarm Scheduled',
+          'A test alarm will ring in 10 seconds.\n\n' +
+          '🔊 Make sure your device volume is up!\n' +
+          '📱 You can lock your device - the alarm will still play.\n' +
+          '⏰ This tests the production-grade alarm system.'
+        );
+      }
+    } catch (error: any) {
+      Alert.alert(
+        '❌ Test Failed',
+        error.message || 'Native alarm module not available. This requires a custom development build.'
+      );
+    }
+  };
+
+  const requestPermissions = async () => {
+    try {
+      await ProductionAlarmManager.requestExactAlarmPermission();
+      Alert.alert(
+        'Permission Request',
+        'Opening system settings. Please grant "Alarms & reminders" permission for reliable alarm functionality.'
+      );
+      
+      // Recheck permissions after a delay
+      setTimeout(async () => {
+        const permissionCheck = await ProductionAlarmManager.canScheduleExactAlarms();
+        setPermissionStatus(permissionCheck.message);
+        setIsReady(permissionCheck.canSchedule);
+      }, 3000);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to request permissions');
+    }
+  };
+
+  const resetForm = () => {
+    setNewAlarmHour('7');
+    setNewAlarmMinute('00');
+    setNewAlarmLabel('Wake up');
+  };
+
+  const formatTime = (hour: number, minute: number): string => {
+    const h = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    return `${h}:${minute.toString().padStart(2, '0')} ${ampm}`;
+  };
+
+  const formatDateTime = (timestamp: number): string => {
+    return new Date(timestamp).toLocaleString();
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Status Bar */}
-      <View style={styles.statusBar}>
-        <Text style={styles.statusText}>{permissionStatus}</Text>
-        {!nativeAlarmReady && (
-          <TouchableOpacity 
-            style={styles.permissionButton}
-            onPress={requestAlarmPermission}
-          >
-            <Text style={styles.permissionButtonText}>Grant Permission</Text>
-          </TouchableOpacity>
-        )}
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>⏰ AutoRise</Text>
+        <Text style={styles.subtitle}>Production-Grade Android Alarm</Text>
+        <Text style={styles.currentTime}>
+          {currentTime.toLocaleTimeString([], { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true 
+          })}
+        </Text>
       </View>
 
-      {/* Current Time Display */}
-      <View style={styles.timeContainer}>
-        <Text style={styles.currentTime}>{formatTime(currentTime)}</Text>
-        <Text style={styles.nativeLabel}>Native Android Alarms</Text>
-      </View>
+      <ScrollView style={styles.content}>
+        {/* System Status */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>System Status</Text>
+          <View style={styles.statusCard}>
+            <Text style={styles.statusText}>
+              Native Module: {isReady ? '✅ Ready' : '❌ Not Available'}
+            </Text>
+            <Text style={styles.statusText}>Platform: {Platform.OS} {Platform.Version}</Text>
+            <Text style={styles.statusText}>Permissions: {permissionStatus}</Text>
+            
+            {!isReady && (
+              <TouchableOpacity style={styles.permissionButton} onPress={requestPermissions}>
+                <Text style={styles.permissionButtonText}>Grant Permissions</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
 
-      {/* Battery Optimization Notice */}
-      <TouchableOpacity 
-        style={styles.batteryButton}
-        onPress={requestBatteryOptimization}
-      >
-        <Text style={styles.batteryButtonText}>
-          🔋 Disable Battery Optimization for Reliable Alarms
-        </Text>
-      </TouchableOpacity>
-
-      {/* Test Alarm Button (Development) */}
-      <TouchableOpacity 
-        style={styles.testButton}
-        onPress={testAlarm}
-      >
-        <Text style={styles.testButtonText}>
-          🧪 Test Alarm (Audio + Vibration)
-        </Text>
-      </TouchableOpacity>
-
-      {/* Alarms List */}
-      <ScrollView style={styles.alarmsContainer}>
-        {alarms.length === 0 ? (
-          <Text style={styles.noAlarmsText}>
-            No alarms set. Create your first native alarm below.
-          </Text>
-        ) : (
-          alarms.map((alarm) => (
-            <View key={alarm.id} style={styles.alarmItem}>
-              <View style={styles.alarmInfo}>
-                <Text style={styles.alarmTime}>{formatAlarmTime(alarm)}</Text>
-                <Text style={styles.alarmType}>Native Android AlarmManager</Text>
-              </View>
-              <View style={styles.alarmControls}>
-                <TouchableOpacity
-                  style={[
-                    styles.toggleButton,
-                    { backgroundColor: alarm.isActive ? '#4CAF50' : '#9E9E9E' }
-                  ]}
-                  onPress={() => toggleAlarm(alarm.id)}
-                >
-                  <Text style={styles.toggleButtonText}>
-                    {alarm.isActive ? 'ON' : 'OFF'}
+        {/* Active Alarms */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Active Alarms ({alarms.length})</Text>
+          {alarms.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No alarms set</Text>
+              <Text style={styles.emptySubtext}>
+                Create your first production-grade alarm that works even when device is locked
+              </Text>
+            </View>
+          ) : (
+            alarms.map(alarm => (
+              <View key={alarm.id} style={styles.alarmCard}>
+                <View style={styles.alarmInfo}>
+                  <Text style={styles.alarmTime}>
+                    {formatTime(alarm.hour, alarm.minute)}
                   </Text>
-                </TouchableOpacity>
+                  <Text style={styles.alarmLabel}>{alarm.label}</Text>
+                  <Text style={styles.alarmScheduled}>
+                    Next: {formatDateTime(alarm.triggerTime)}
+                  </Text>
+                </View>
                 <TouchableOpacity
                   style={styles.deleteButton}
                   onPress={() => deleteAlarm(alarm.id)}
                 >
-                  <Text style={styles.deleteButtonText}>🗑️</Text>
+                  <Text style={styles.deleteButtonText}>Cancel</Text>
                 </TouchableOpacity>
               </View>
-            </View>
-          ))
-        )}
+            ))
+          )}
+        </View>
+
+        {/* Test Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Test & Debug</Text>
+          <TouchableOpacity 
+            style={[styles.testButton, !isReady && styles.disabledButton]} 
+            onPress={testAlarm}
+            disabled={!isReady}
+          >
+            <Text style={styles.testButtonText}>🧪 Test Alarm (10 seconds)</Text>
+          </TouchableOpacity>
+          <Text style={styles.testInfo}>
+            Tests production alarm functionality. Works even when device is locked or in Doze mode.
+            {!isReady && '\n\n⚠️ Requires native module and permissions.'}
+          </Text>
+        </View>
+
+        {/* Technical Info */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Technical Features</Text>
+          <Text style={styles.featureText}>✅ AlarmManager.setExactAndAllowWhileIdle</Text>
+          <Text style={styles.featureText}>✅ Foreground service for audio playback</Text>
+          <Text style={styles.featureText}>✅ USAGE_ALARM (bypasses Do Not Disturb)</Text>
+          <Text style={styles.featureText}>✅ Wake locks and screen management</Text>
+          <Text style={styles.featureText}>✅ Full-screen alarm over lock screen</Text>
+          <Text style={styles.featureText}>✅ Survives device restart</Text>
+        </View>
       </ScrollView>
 
       {/* Add Alarm Button */}
       <TouchableOpacity
-        style={[
-          styles.addButton,
-          { backgroundColor: nativeAlarmReady ? '#2196F3' : '#9E9E9E' }
-        ]}
-        onPress={() => setShowCreateAlarm(true)}
-        disabled={!nativeAlarmReady}
+        style={[styles.addButton, !isReady && styles.disabledButton]}
+        onPress={() => setShowCreateModal(true)}
+        disabled={!isReady}
       >
-        <Text style={styles.addButtonText}>+ Add Native Alarm</Text>
+        <Text style={styles.addButtonText}>+ Create Alarm</Text>
       </TouchableOpacity>
 
       {/* Create Alarm Modal */}
       <Modal
-        visible={showCreateAlarm}
+        visible={showCreateModal}
         animationType="slide"
         transparent={true}
+        onRequestClose={() => setShowCreateModal(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Create Native Alarm</Text>
-            <Text style={styles.modalSubtitle}>Using Android AlarmManager</Text>
+            <Text style={styles.modalTitle}>Create Production Alarm</Text>
             
             <View style={styles.timeInputContainer}>
-              <TextInput
-                style={styles.timeInput}
-                value={newAlarmHour}
-                onChangeText={setNewAlarmHour}
-                placeholder="12"
-                keyboardType="numeric"
-                maxLength={2}
-              />
+              <View style={styles.timeInput}>
+                <Text style={styles.inputLabel}>Hour (0-23)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={newAlarmHour}
+                  onChangeText={setNewAlarmHour}
+                  keyboardType="numeric"
+                  maxLength={2}
+                />
+              </View>
               <Text style={styles.timeSeparator}>:</Text>
-              <TextInput
-                style={styles.timeInput}
-                value={newAlarmMinute}
-                onChangeText={setNewAlarmMinute}
-                placeholder="00"
-                keyboardType="numeric"
-                maxLength={2}
-              />
-              <TouchableOpacity
-                style={styles.ampmButton}
-                onPress={() => setNewAlarmAmPm(newAlarmAmPm === 'AM' ? 'PM' : 'AM')}
-              >
-                <Text style={styles.ampmText}>{newAlarmAmPm}</Text>
-              </TouchableOpacity>
+              <View style={styles.timeInput}>
+                <Text style={styles.inputLabel}>Minute (0-59)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={newAlarmMinute}
+                  onChangeText={setNewAlarmMinute}
+                  keyboardType="numeric"
+                  maxLength={2}
+                />
+              </View>
             </View>
+
+            <View style={styles.labelInputContainer}>
+              <Text style={styles.inputLabel}>Alarm Label</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newAlarmLabel}
+                onChangeText={setNewAlarmLabel}
+                placeholder="Enter alarm description"
+                maxLength={50}
+              />
+            </View>
+
+            <Text style={styles.modalInfo}>
+              This alarm will use native Android AlarmManager for maximum reliability.
+              It will ring even when your device is locked or in Doze mode.
+            </Text>
 
             <View style={styles.modalButtons}>
               <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => setShowCreateAlarm(false)}
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setShowCreateModal(false)}
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.createButton}
+                style={[styles.modalButton, styles.createButton]}
                 onPress={createAlarm}
               >
-                <Text style={styles.createButtonText}>Create</Text>
+                <Text style={styles.createButtonText}>Create Alarm</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </View>
-      </Modal>
-
-      {/* Alarm Ringing Modal */}
-      <Modal
-        visible={isAlarmRinging}
-        animationType="fade"
-        transparent={false}
-      >
-        <View style={styles.alarmRingingContainer}>
-          <Text style={styles.alarmRingingTitle}>⏰ ALARM</Text>
-          <Text style={styles.alarmRingingTime}>
-            {currentRingingAlarm ? formatAlarmTime(currentRingingAlarm) : ''}
-          </Text>
-          <Text style={styles.alarmRingingSubtitle}>Native Android Alarm</Text>
-          
-          <TouchableOpacity
-            style={styles.dismissButton}
-            onPress={dismissAlarm}
-          >
-            <Text style={styles.dismissButtonText}>DISMISS</Text>
-          </TouchableOpacity>
         </View>
       </Modal>
     </SafeAreaView>
@@ -582,256 +367,262 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#f8f9fa',
   },
-  statusBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  header: {
+    backgroundColor: '#1976D2',
+    padding: 20,
     alignItems: 'center',
+  },
+  title: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: 'white',
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#E3F2FD',
+    marginBottom: 8,
+  },
+  currentTime: {
+    fontSize: 20,
+    color: 'white',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontWeight: 'bold',
+  },
+  content: {
+    flex: 1,
     padding: 16,
-    backgroundColor: '#1a1a1a',
+  },
+  section: {
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 12,
+  },
+  statusCard: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
   },
   statusText: {
-    color: '#fff',
     fontSize: 14,
-    flex: 1,
+    color: '#666',
+    marginBottom: 4,
   },
   permissionButton: {
     backgroundColor: '#FF9800',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    padding: 12,
     borderRadius: 6,
+    alignItems: 'center',
+    marginTop: 8,
   },
   permissionButtonText: {
-    color: '#fff',
-    fontSize: 12,
+    color: 'white',
     fontWeight: 'bold',
   },
-  timeContainer: {
+  emptyState: {
     alignItems: 'center',
-    padding: 30,
-  },
-  currentTime: {
-    fontSize: 48,
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  nativeLabel: {
-    fontSize: 16,
-    color: '#4CAF50',
-    marginTop: 8,
-    fontWeight: 'bold',
-  },
-  batteryButton: {
-    backgroundColor: '#FF5722',
-    margin: 16,
-    padding: 12,
+    padding: 32,
+    backgroundColor: 'white',
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
   },
-  batteryButtonText: {
-    color: '#fff',
-    textAlign: 'center',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  testButton: {
-    backgroundColor: '#9C27B0',
-    marginHorizontal: 16,
-    marginBottom: 16,
-    padding: 12,
-    borderRadius: 8,
-  },
-  testButtonText: {
-    color: '#fff',
-    textAlign: 'center',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  alarmsContainer: {
-    flex: 1,
-    padding: 16,
-  },
-  noAlarmsText: {
+  emptyText: {
+    fontSize: 18,
     color: '#666',
-    textAlign: 'center',
-    fontSize: 16,
-    marginTop: 40,
-  },
-  alarmItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#1a1a1a',
-    padding: 16,
-    borderRadius: 8,
     marginBottom: 8,
+    fontWeight: 'bold',
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  alarmCard: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   alarmInfo: {
     flex: 1,
   },
   alarmTime: {
-    color: '#fff',
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
+    color: '#1976D2',
+    marginBottom: 4,
   },
-  alarmType: {
-    color: '#4CAF50',
+  alarmLabel: {
+    fontSize: 16,
+    color: '#333',
+    marginBottom: 4,
+  },
+  alarmScheduled: {
     fontSize: 12,
-    marginTop: 4,
-  },
-  alarmControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  toggleButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
-    marginRight: 8,
-  },
-  toggleButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
+    color: '#666',
   },
   deleteButton: {
-    padding: 8,
+    backgroundColor: '#f44336',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 4,
   },
   deleteButtonText: {
-    fontSize: 18,
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  testButton: {
+    backgroundColor: '#4CAF50',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  testButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  testInfo: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    fontStyle: 'italic',
+    lineHeight: 20,
+  },
+  featureText: {
+    fontSize: 14,
+    color: '#4CAF50',
+    marginBottom: 4,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
   addButton: {
+    backgroundColor: '#1976D2',
     margin: 16,
     padding: 16,
     borderRadius: 8,
     alignItems: 'center',
   },
   addButtonText: {
-    color: '#fff',
+    color: 'white',
     fontSize: 18,
     fontWeight: 'bold',
   },
+  disabledButton: {
+    backgroundColor: '#ccc',
+    opacity: 0.6,
+  },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   modalContent: {
-    backgroundColor: '#1a1a1a',
-    padding: 24,
+    backgroundColor: 'white',
     borderRadius: 12,
+    padding: 24,
     width: '90%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
   modalTitle: {
-    color: '#fff',
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 4,
-  },
-  modalSubtitle: {
-    color: '#4CAF50',
-    fontSize: 14,
-    textAlign: 'center',
     marginBottom: 24,
+    color: '#333',
   },
   timeInputContainer: {
     flexDirection: 'row',
+    alignItems: 'flex-end',
     justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   timeInput: {
-    backgroundColor: '#333',
-    color: '#fff',
-    padding: 12,
-    borderRadius: 8,
-    fontSize: 24,
-    textAlign: 'center',
-    width: 60,
+    alignItems: 'center',
   },
   timeSeparator: {
-    color: '#fff',
-    fontSize: 24,
-    marginHorizontal: 8,
-  },
-  ampmButton: {
-    backgroundColor: '#2196F3',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginLeft: 16,
-  },
-  ampmText: {
-    color: '#fff',
-    fontSize: 18,
+    fontSize: 32,
     fontWeight: 'bold',
+    marginHorizontal: 12,
+    marginBottom: 12,
+    color: '#1976D2',
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+  },
+  textInput: {
+    borderWidth: 2,
+    borderColor: '#1976D2',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 18,
+    textAlign: 'center',
+    minWidth: 80,
+    fontWeight: 'bold',
+  },
+  labelInputContainer: {
+    marginBottom: 20,
+  },
+  modalInfo: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 20,
+    fontStyle: 'italic',
   },
   modalButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  cancelButton: {
-    backgroundColor: '#666',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
+  modalButton: {
     flex: 1,
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: '#f5f5f5',
     marginRight: 8,
   },
-  cancelButtonText: {
-    color: '#fff',
-    textAlign: 'center',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
   createButton: {
-    backgroundColor: '#4CAF50',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-    flex: 1,
+    backgroundColor: '#1976D2',
     marginLeft: 8,
   },
+  cancelButtonText: {
+    color: '#666',
+    fontWeight: 'bold',
+  },
   createButtonText: {
-    color: '#fff',
-    textAlign: 'center',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  alarmRingingContainer: {
-    flex: 1,
-    backgroundColor: '#FF5722',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  alarmRingingTitle: {
-    fontSize: 64,
-    color: '#fff',
-    fontWeight: 'bold',
-    marginBottom: 16,
-  },
-  alarmRingingTime: {
-    fontSize: 48,
-    color: '#fff',
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  alarmRingingSubtitle: {
-    fontSize: 18,
-    color: '#fff',
-    marginBottom: 48,
-  },
-  dismissButton: {
-    backgroundColor: '#fff',
-    paddingHorizontal: 48,
-    paddingVertical: 16,
-    borderRadius: 12,
-  },
-  dismissButtonText: {
-    color: '#FF5722',
-    fontSize: 24,
+    color: 'white',
     fontWeight: 'bold',
   },
 });

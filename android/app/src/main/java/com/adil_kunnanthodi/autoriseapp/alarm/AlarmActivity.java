@@ -2,136 +2,188 @@ package com.adil_kunnanthodi.autoriseapp.alarm;
 
 import android.app.Activity;
 import android.app.KeyguardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
-import android.view.Window;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 /**
- * AlarmActivity - Full screen alarm UI that shows over lock screen
+ * Full-screen alarm activity that shows over lock screen
  */
 public class AlarmActivity extends Activity {
     private static final String TAG = "AlarmActivity";
     
     private String alarmId;
+    private String alarmLabel;
     private String alarmTime;
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        
         Log.d(TAG, "AlarmActivity created");
         
-        // Get alarm data from intent
-        alarmId = getIntent().getStringExtra("alarmId");
-        alarmTime = getIntent().getStringExtra("alarmTime");
+        setupWindow();
         
-        // Setup full screen over lock screen
-        setupLockScreenDisplay();
+        Intent intent = getIntent();
+        alarmId = intent.getStringExtra(AlarmReceiver.EXTRA_ALARM_ID);
+        alarmLabel = intent.getStringExtra(AlarmReceiver.EXTRA_ALARM_LABEL);
+        alarmTime = intent.getStringExtra(AlarmReceiver.EXTRA_ALARM_TIME);
         
-        // Create simple alarm UI
-        createAlarmUI();
+        setContentView(createAlarmView());
     }
     
-    private void setupLockScreenDisplay() {
-        // Turn screen on and show over lock screen
+    private void setupWindow() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true);
             setTurnScreenOn(true);
+            
+            KeyguardManager keyguardManager = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+            if (keyguardManager != null) {
+                keyguardManager.requestDismissKeyguard(this, null);
+            }
         } else {
-            Window window = getWindow();
-            window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED |
-                           WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON |
-                           WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        }
-        
-        // Dismiss keyguard
-        KeyguardManager keyguardManager = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            keyguardManager.requestDismissKeyguard(this, null);
-        } else {
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
-        }
-    }
-    
-    private void createAlarmUI() {
-        // Create simple layout programmatically
-        setContentView(createMainLayout());
-    }
-    
-    private View createMainLayout() {
-        // Create vertical linear layout
-        android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
-        layout.setOrientation(android.widget.LinearLayout.VERTICAL);
-        layout.setGravity(android.view.Gravity.CENTER);
-        layout.setBackgroundColor(0xFFFF0000); // Red background
-        layout.setPadding(50, 50, 50, 50);
-        
-        // Alarm title
-        TextView titleView = new TextView(this);
-        titleView.setText("🚨 ALARM 🚨");
-        titleView.setTextSize(48);
-        titleView.setTextColor(0xFFFFFFFF);
-        titleView.setGravity(android.view.Gravity.CENTER);
-        layout.addView(titleView);
-        
-        // Alarm time
-        TextView timeView = new TextView(this);
-        timeView.setText(alarmTime != null ? alarmTime : "WAKE UP!");
-        timeView.setTextSize(36);
-        timeView.setTextColor(0xFFFFFF00); // Yellow
-        timeView.setGravity(android.view.Gravity.CENTER);
-        android.widget.LinearLayout.LayoutParams timeParams = 
-            new android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+            getWindow().addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED |
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON |
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD |
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
             );
-        timeParams.setMargins(0, 50, 0, 100);
-        timeView.setLayoutParams(timeParams);
-        layout.addView(timeView);
+        }
         
-        // Dismiss button
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                View.SYSTEM_UI_FLAG_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            );
+        }
+    }
+    
+    private View createAlarmView() {
+        LinearLayout mainLayout = new LinearLayout(this);
+        mainLayout.setOrientation(LinearLayout.VERTICAL);
+        mainLayout.setGravity(android.view.Gravity.CENTER);
+        mainLayout.setBackgroundColor(0xFF1976D2);
+        mainLayout.setPadding(64, 64, 64, 64);
+        
+        TextView titleText = new TextView(this);
+        titleText.setText("⏰ AutoRise");
+        titleText.setTextSize(32);
+        titleText.setTextColor(0xFFFFFFFF);
+        titleText.setTypeface(null, android.graphics.Typeface.BOLD);
+        titleText.setGravity(android.view.Gravity.CENTER);
+        titleText.setPadding(0, 0, 0, 32);
+        
+        TextView timeText = new TextView(this);
+        timeText.setText(alarmTime != null ? alarmTime : "ALARM");
+        timeText.setTextSize(64);
+        timeText.setTypeface(null, android.graphics.Typeface.BOLD);
+        timeText.setTextColor(0xFFFFFFFF);
+        timeText.setGravity(android.view.Gravity.CENTER);
+        timeText.setPadding(0, 0, 0, 16);
+        
+        TextView labelText = new TextView(this);
+        labelText.setText(alarmLabel != null ? alarmLabel : "Alarm");
+        labelText.setTextSize(20);
+        labelText.setTextColor(0xFFE3F2FD);
+        labelText.setGravity(android.view.Gravity.CENTER);
+        labelText.setPadding(0, 0, 0, 64);
+        
         Button dismissButton = new Button(this);
         dismissButton.setText("DISMISS ALARM");
-        dismissButton.setTextSize(24);
-        dismissButton.setBackgroundColor(0xFF4CAF50); // Green
-        dismissButton.setTextColor(0xFFFFFFFF);
-        dismissButton.setPadding(50, 30, 50, 30);
-        dismissButton.setOnClickListener(v -> dismissAlarm());
-        layout.addView(dismissButton);
+        dismissButton.setTextSize(18);
+        dismissButton.setTextColor(0xFF1976D2);
+        dismissButton.setBackgroundColor(0xFFFFFFFF);
+        dismissButton.setPadding(48, 24, 48, 24);
         
-        return layout;
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        buttonParams.setMargins(0, 16, 0, 16);
+        dismissButton.setLayoutParams(buttonParams);
+        dismissButton.setOnClickListener(v -> dismissAlarm());
+        
+        Button snoozeButton = new Button(this);
+        snoozeButton.setText("SNOOZE (5 min)");
+        snoozeButton.setTextSize(16);
+        snoozeButton.setTextColor(0xFFFFFFFF);
+        snoozeButton.setBackgroundColor(0x80FFFFFF);
+        snoozeButton.setPadding(32, 16, 32, 16);
+        snoozeButton.setLayoutParams(buttonParams);
+        snoozeButton.setOnClickListener(v -> snoozeAlarm());
+        
+        mainLayout.addView(titleText);
+        mainLayout.addView(timeText);
+        mainLayout.addView(labelText);
+        mainLayout.addView(dismissButton);
+        mainLayout.addView(snoozeButton);
+        
+        return mainLayout;
     }
     
     private void dismissAlarm() {
-        Log.d(TAG, "🔇 Dismissing alarm");
+        Log.d(TAG, "Alarm dismissed by user");
         
-        // Stop the alarm service
         Intent serviceIntent = new Intent(this, AlarmService.class);
-        serviceIntent.setAction(AlarmService.ACTION_STOP_ALARM);
+        serviceIntent.setAction("STOP_ALARM");
         startService(serviceIntent);
         
-        // Finish the activity
+        Intent dismissIntent = new Intent("com.autoriseapp.ALARM_DISMISSED");
+        dismissIntent.putExtra("alarmId", alarmId);
+        sendBroadcast(dismissIntent);
+        
         finish();
+    }
+    
+    private void snoozeAlarm() {
+        Log.d(TAG, "Alarm snoozed by user for 5 minutes");
+        
+        Intent serviceIntent = new Intent(this, AlarmService.class);
+        serviceIntent.setAction("STOP_ALARM");
+        startService(serviceIntent);
+        
+        long snoozeTime = System.currentTimeMillis() + (5 * 60 * 1000);
+        String snoozeId = alarmId + "_snooze_" + System.currentTimeMillis();
+        
+        try {
+            AlarmReceiver.scheduleExactAlarm(this, snoozeId, snoozeTime, "Snooze - " + alarmLabel);
+        } catch (Exception e) {
+            Log.e(TAG, "Error scheduling snooze alarm", e);
+        }
+        
+        Intent snoozeIntent = new Intent("com.autoriseapp.ALARM_SNOOZED");
+        snoozeIntent.putExtra("alarmId", alarmId);
+        snoozeIntent.putExtra("snoozeMinutes", 5);
+        sendBroadcast(snoozeIntent);
+        
+        finish();
+    }
+    
+    @Override
+    public void onBackPressed() {
+        Log.d(TAG, "Back button pressed - ignoring to prevent accidental dismissal");
     }
     
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        // Handle new alarm if activity is already running
-        setIntent(intent);
-        alarmId = intent.getStringExtra("alarmId");
-        alarmTime = intent.getStringExtra("alarmTime");
-    }
-    
-    @Override
-    public void onBackPressed() {
-        // Prevent back button from dismissing alarm
-        // User must use dismiss button
+        
+        alarmId = intent.getStringExtra(AlarmReceiver.EXTRA_ALARM_ID);
+        alarmLabel = intent.getStringExtra(AlarmReceiver.EXTRA_ALARM_LABEL);
+        alarmTime = intent.getStringExtra(AlarmReceiver.EXTRA_ALARM_TIME);
+        
+        setContentView(createAlarmView());
     }
 }
